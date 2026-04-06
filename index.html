@@ -730,15 +730,17 @@ body {
   .content h1 { font-size: 18pt; break-after: avoid; color: var(--teal); }
   .content h2 { font-size: 14pt; break-after: avoid; }
   .content h3 { font-size: 12pt; break-after: avoid; }
-  .health-card, .kpi-card, .callout, .toggle, .risk-card { break-inside: avoid; }
+  .health-card, .kpi-card, .callout, .risk-card { break-inside: avoid; }
   .toggle-body { display: block !important; }
   .toggle-chevron { display: none; }
-  .toggle { border: none; box-shadow: none; }
-  .toggle-header { background: transparent; padding-left: 0; cursor: default; }
+  .toggle { border: none; box-shadow: none; break-inside: auto; overflow: visible; }
+  .toggle-header { background: transparent; padding: 12pt 0 4pt; cursor: default; }
+  .toggle-header h2 { break-after: avoid; }
   .table-wrap { overflow: visible; box-shadow: none; }
   .content table { min-width: 0; font-size: 9pt; }
   .kpi-card, .health-card { box-shadow: none; }
-  .report-section.section-alt { background: var(--fog) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; mask-image: none; -webkit-mask-image: none; margin: 0; padding-left: 0; padding-right: 0; }
+  .report-section { padding: 12pt 0; }
+  .report-section.section-alt { background: none !important; mask-image: none; -webkit-mask-image: none; margin: 0; padding-left: 0; padding-right: 0; }
   .btn-gold { background: var(--gold) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .two-col { grid-template-columns: 1fr 1fr; }
   a { color: inherit; text-decoration: none; }
@@ -782,8 +784,8 @@ body {
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
 // ── AUTH ──
-const HASH_USER = 'eb05199cbee63683f9524f30f780df2c44a489cfcd42da6fa7155afda1bf2add';
-const HASH_PASS = 'd6062cae6b541e71cbd149db6209447809f1494780d9f498b2dec6b598c44f25';
+const HASH_USER = '5e927b6f6a489b0f637d560fbddd889b39cd4ae991c925e8fc8a996df91242d8';
+const HASH_PASS = 'a4d160dca2d6525aa6b9bec7b60c84b1d0dedd833ab1ab84f158d921b0d1ebd6';
 
 async function sha256(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
@@ -1150,13 +1152,190 @@ function observeSections() {
 }
 
 // ── CLIPBOARD ──
+// Build Word-compatible HTML by flattening custom elements
+function buildWordHtml() {
+  const clone = document.getElementById('report-content').cloneNode(true);
+
+  // 1. Report hero -> simple headings
+  clone.querySelectorAll('.report-hero').forEach(hero => {
+    const h1 = hero.querySelector('h1');
+    const h2 = hero.querySelector('h2');
+    const p = hero.querySelector('p');
+    const frag = document.createDocumentFragment();
+    if (h1) { const el = document.createElement('h1'); el.textContent = h1.textContent; frag.appendChild(el); }
+    if (h2) { const el = document.createElement('h2'); el.textContent = h2.textContent; frag.appendChild(el); }
+    if (p && p.textContent.trim()) { const el = document.createElement('p'); el.innerHTML = '<em>' + p.textContent + '</em>'; frag.appendChild(el); }
+    frag.appendChild(document.createElement('hr'));
+    hero.replaceWith(frag);
+  });
+
+  // 2. Section labels -> small bold paragraph
+  clone.querySelectorAll('.section-label').forEach(el => {
+    const p = document.createElement('p');
+    p.innerHTML = '<b>' + el.textContent + '</b>';
+    el.replaceWith(p);
+  });
+
+  // 3. KPI grids -> table
+  clone.querySelectorAll('.kpi-grid').forEach(grid => {
+    const cards = grid.querySelectorAll('.kpi-card');
+    if (!cards.length) { grid.remove(); return; }
+    const table = document.createElement('table');
+    table.setAttribute('border', '1');
+    table.setAttribute('cellpadding', '8');
+    table.style.borderCollapse = 'collapse';
+    table.style.width = '100%';
+    const tr1 = document.createElement('tr');
+    const tr2 = document.createElement('tr');
+    cards.forEach(card => {
+      const val = card.querySelector('.kpi-value');
+      const label = card.querySelector('.kpi-label');
+      const td1 = document.createElement('td');
+      td1.innerHTML = '<b>' + (val ? val.textContent : '') + '</b>';
+      td1.style.textAlign = 'center';
+      td1.style.fontSize = '18pt';
+      tr1.appendChild(td1);
+      const td2 = document.createElement('td');
+      td2.textContent = label ? label.textContent : '';
+      td2.style.textAlign = 'center';
+      td2.style.fontSize = '9pt';
+      td2.style.color = '#666';
+      tr2.appendChild(td2);
+    });
+    table.appendChild(tr1);
+    table.appendChild(tr2);
+    grid.replaceWith(table);
+  });
+
+  // 4. Callouts -> blockquote with bold label
+  clone.querySelectorAll('.callout').forEach(callout => {
+    const bq = document.createElement('blockquote');
+    bq.style.borderLeft = '3px solid #ccc';
+    bq.style.paddingLeft = '12px';
+    bq.style.margin = '12px 0';
+    const label = callout.querySelector('.callout-label');
+    if (label) {
+      const b = document.createElement('p');
+      b.innerHTML = '<b>' + label.textContent + '</b>';
+      bq.appendChild(b);
+    }
+    const content = callout.querySelectorAll('div > p, div > ul, div > ol');
+    content.forEach(el => bq.appendChild(el.cloneNode(true)));
+    if (!content.length) {
+      // fallback: grab all non-label text
+      const p = document.createElement('p');
+      p.textContent = callout.textContent.replace(label ? label.textContent : '', '').trim();
+      bq.appendChild(p);
+    }
+    callout.replaceWith(bq);
+  });
+
+  // 5. Health cards -> h3 + content
+  clone.querySelectorAll('.health-card').forEach(card => {
+    const frag = document.createDocumentFragment();
+    const h3 = card.querySelector('h3');
+    if (h3) { const el = document.createElement('h3'); el.innerHTML = h3.innerHTML; frag.appendChild(el); }
+    Array.from(card.children).forEach(child => {
+      if (child.tagName === 'H3') return;
+      frag.appendChild(child.cloneNode(true));
+    });
+    card.replaceWith(frag);
+  });
+
+  // 6. Risk cards -> h3 + severity + description + opatreni
+  clone.querySelectorAll('.risk-card').forEach(card => {
+    const frag = document.createDocumentFragment();
+    const h3 = card.querySelector('h3');
+    const sev = card.querySelector('.risk-severity');
+    const title = document.createElement('h3');
+    title.textContent = (h3 ? h3.textContent : '') + (sev ? ' (' + sev.textContent + ')' : '');
+    frag.appendChild(title);
+    card.querySelectorAll('p').forEach(p => {
+      const clone2 = p.cloneNode(true);
+      frag.appendChild(clone2);
+    });
+    card.replaceWith(frag);
+  });
+
+  // 7. Toggles -> expand: h2 + body content
+  clone.querySelectorAll('.toggle').forEach(toggle => {
+    const frag = document.createDocumentFragment();
+    const header = toggle.querySelector('.toggle-header');
+    const body = toggle.querySelector('.toggle-body');
+    if (header) {
+      const h2 = header.querySelector('h2');
+      if (h2) { const el = document.createElement('h2'); el.textContent = h2.textContent; frag.appendChild(el); }
+      const sub = header.querySelector('div[style]');
+      if (sub && sub.textContent.trim()) { const p = document.createElement('p'); p.innerHTML = '<em>' + sub.textContent + '</em>'; frag.appendChild(p); }
+    }
+    if (body) {
+      Array.from(body.children).forEach(child => frag.appendChild(child.cloneNode(true)));
+    }
+    toggle.replaceWith(frag);
+  });
+
+  // 8. Two-col -> table with 2 columns
+  clone.querySelectorAll('.two-col').forEach(grid => {
+    const cols = grid.querySelectorAll('.col-card');
+    const table = document.createElement('table');
+    table.setAttribute('border', '1');
+    table.setAttribute('cellpadding', '8');
+    table.style.borderCollapse = 'collapse';
+    table.style.width = '100%';
+    const tr = document.createElement('tr');
+    cols.forEach(col => {
+      const td = document.createElement('td');
+      td.style.verticalAlign = 'top';
+      td.style.width = '50%';
+      td.innerHTML = col.innerHTML;
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+    grid.replaceWith(table);
+  });
+
+  // 9. Unwrap report-section divs
+  clone.querySelectorAll('.report-section').forEach(section => {
+    const frag = document.createDocumentFragment();
+    while (section.firstChild) frag.appendChild(section.firstChild);
+    section.replaceWith(frag);
+  });
+
+  // 10. Unwrap table-wrap divs
+  clone.querySelectorAll('.table-wrap').forEach(wrap => {
+    const table = wrap.querySelector('table');
+    if (table) {
+      table.setAttribute('border', '1');
+      table.setAttribute('cellpadding', '6');
+      table.style.borderCollapse = 'collapse';
+      wrap.replaceWith(table);
+    }
+  });
+
+  // 11. Badges -> plain text
+  clone.querySelectorAll('.badge').forEach(badge => {
+    const span = document.createElement('span');
+    span.textContent = badge.textContent;
+    badge.replaceWith(span);
+  });
+
+  // 12. Remove SVGs (chevrons etc)
+  clone.querySelectorAll('svg').forEach(svg => svg.remove());
+
+  // 13. Remove hidden elements
+  clone.querySelectorAll('[style*="display: none"]').forEach(el => el.remove());
+
+  return clone.innerHTML;
+}
+
 async function copyForWord() {
-  const content = document.getElementById('report-content').innerHTML;
+  const html = buildWordHtml();
+  const plain = document.getElementById('report-content').innerText;
   try {
     await navigator.clipboard.write([
       new ClipboardItem({
-        'text/html': new Blob([content], { type: 'text/html' }),
-        'text/plain': new Blob([document.getElementById('report-content').innerText], { type: 'text/plain' }),
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
       })
     ]);
     showToast('Zkop\u00edrov\u00e1no do schr\u00e1nky');
