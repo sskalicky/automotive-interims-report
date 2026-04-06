@@ -1084,7 +1084,12 @@ function styleHealthCards(el) {
 
   const nodes = [];
   let n = sectionStart.nextElementSibling;
-  while (n && n !== sectionEnd) { nodes.push(n); n = n.nextElementSibling; }
+  while (n && n !== sectionEnd) {
+    // Stop before section labels — they belong to the next section
+    if (n.classList && n.classList.contains('section-label')) break;
+    nodes.push(n);
+    n = n.nextElementSibling;
+  }
 
   // Find title paragraphs — they have .badge inside <strong>
   const titleIndices = [];
